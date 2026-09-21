@@ -1,6 +1,7 @@
 // oled_view.c
 #include "oled_view.h"
 
+#include <math.h>
 #include <stdio.h>
 #include "esp_log.h"
 #include "ssd1306.h"
@@ -9,6 +10,10 @@ static const char *TAG = "OLED_VIEW";
 
 static HelperI2CDevice s_oled;
 static bool s_ready = false;
+
+// Distribución: 8 filas de 8 px (título y valores de cada sensor, una fila cada uno).
+// Con letra de tamaño 1 caben 21 caracteres por fila.
+#define ROW(n)  ((n) * 8)
 
 esp_err_t oled_view_init(HelperI2C *bus)
 {
@@ -47,44 +52,47 @@ esp_err_t oled_view_init(HelperI2C *bus)
     return ESP_OK;
 }
 
-void oled_view_show_imu(bool acc_ok, float ax, float ay, float az, const char *acc_msg,
-                        bool inc_ok, float inc_x_deg, float inc_y_deg, const char *inc_msg, bool inc_warn)
+// Giroscopio: 2 decimales, y 1 decimal si el valor es de 100 o más (para que quepan 3 valores).
+static void fmt_gyro(char *dst, size_t n, float v)
 {
-    if (!s_ready)
+    snprintf(dst, n, (fabsf(v) < 100.0f) ? "%+.2f" : "%+.1f", (double)v);
+}
+
+static void draw_block(int row, const char *title, bool ok, const char *values)
+{
+    char line[24];
+    snprintf(line, sizeof(line), "%s", title);
+    SSD1306_Drawtext(0, (uint8_t)ROW(row), line, 1);
+    snprintf(line, sizeof(line), "%s", ok ? values : "sin datos");
+    SSD1306_Drawtext(0, (uint8_t)ROW(row + 1), line, 1);
+}
+
+void oled_view_show_all(const oled_data_t *d)
+{
+    if (!s_ready || d == NULL)
     {
         return;
     }
 
-    // Tamaño 1 = 6 px de ancho por carácter (21 por línea) y 7 px de alto.
-    char line[24];
+    char v[32];
+    char gx[10], gy[10], gz[10];
 
     SSD1306_ClearDisplay();
 
-    SSD1306_Drawtext(0, 0, "ACEL ICM-42670 [g]", 1);
-    if (acc_ok)
-    {
-        snprintf(line, sizeof(line), "X:%+.3f Y:%+.3f", ax, ay);
-        SSD1306_Drawtext(0, 11, line, 1);
-        snprintf(line, sizeof(line), "Z:%+.3f", az);
-        SSD1306_Drawtext(0, 22, line, 1);
-    }
-    else
-    {
-        snprintf(line, sizeof(line), "%s", (acc_msg != NULL) ? acc_msg : "sin datos");
-        SSD1306_Drawtext(0, 11, line, 1);
-    }
+    snprintf(v, sizeof(v), "%+.3f %+.3f %+.3f", (double)d->acc_g[0], (double)d->acc_g[1], (double)d->acc_g[2]);
+    draw_block(0, "ACEL g", d->acc_ok, v);
 
-    SSD1306_Drawtext(0, 36, inc_warn ? "INCL SCL3400 [grad]!" : "INCL SCL3400 [grad]", 1);
-    if (inc_ok)
-    {
-        snprintf(line, sizeof(line), "X:%+.3f Y:%+.3f", inc_x_deg, inc_y_deg);
-        SSD1306_Drawtext(0, 47, line, 1);
-    }
-    else
-    {
-        snprintf(line, sizeof(line), "%s", (inc_msg != NULL) ? inc_msg : "sin datos");
-        SSD1306_Drawtext(0, 47, line, 1);
-    }
+    fmt_gyro(gx, sizeof(gx), d->gyr_dps[0]);
+    fmt_gyro(gy, sizeof(gy), d->gyr_dps[1]);
+    fmt_gyro(gz, sizeof(gz), d->gyr_dps[2]);
+    snprintf(v, sizeof(v), "%s %s %s", gx, gy, gz);
+    draw_block(2, "GIRO dps", d->gyr_ok, v);
+
+    snprintf(v, sizeof(v), "%+.3f %+.3f", (double)d->inc_deg[0], (double)d->inc_deg[1]);
+    draw_block(4, d->inc_warn ? "INCL grad !" : "INCL grad", d->inc_ok, v);
+
+    snprintf(v, sizeof(v), "%+.3f %+.3f %+.3f", (double)d->mag_g[0], (double)d->mag_g[1], (double)d->mag_g[2]);
+    draw_block(6, "MAG gauss", d->mag_ok, v);
 
     SSD1306_Display(&s_oled);
 }
