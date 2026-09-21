@@ -6,7 +6,6 @@ idf_component_register(
         "scl3400.c"
         "oled_view.c"
         "qmc5883l.c"
-        "mag_display.c"
     INCLUDE_DIRS
         "."
     REQUIRES
