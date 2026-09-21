@@ -1,12 +1,14 @@
 // main.c - Proyecto de calibración de sensores
-// ETAPA 3: acelerómetro y giroscopio (ICM-42670-P), inclinómetro (SCL3400) y magnetómetro (QMC5883L),
-// mostrados por la consola serie y por la OLED.
+// ETAPA 4.1: acelerómetro y giroscopio (ICM-42670-P), inclinómetro (SCL3400) y magnetómetro (QMC5883L),
+// mostrados por la consola serie y por la OLED, con calibración estática del giroscopio guardada en NVS.
 #include <math.h>
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "calib.h"
+#include "console_in.h"
 #include "helper_i2c.h"
 #include "icm42670p.h"
 #include "oled_view.h"
@@ -79,6 +81,13 @@ void app_main(void)
         printf("OLED >> no disponible, se usa solo la consola\n");
     }
 
+    // Teclas desde el monitor serie y calibraciones guardadas en NVS
+    if (console_in_init() != ESP_OK)
+    {
+        printf("CAL >> no se pudo iniciar la lectura de teclas: no se podra calibrar\n");
+    }
+    calib_init();
+
     // Cada sensor es independiente: si uno falla, los demás siguen funcionando
     esp_err_t e_icm_init = icm42670p_init();
     esp_err_t e_scl_init = scl3400_init();
@@ -89,6 +98,10 @@ void app_main(void)
     report_init("ICM-42670-P", e_icm_init, RETRY_PERIOD_MS / 1000);
     report_init("SCL3400", e_scl_init, RETRY_PERIOD_MS / 1000);
     report_init("QMC5883L", e_mag_init, RETRY_PERIOD_MS / 1000);
+
+    calib_print_status();
+    calib_boot_menu(icm_ready);
+    printf("SENS >> pila libre minima del hilo principal: %u bytes\n", (unsigned)uxTaskGetStackHighWaterMark(NULL));
 
     printf("SENS >> Leyendo. Deja la unidad quieta y luego mueve la placa despacio.\n");
     if (scl_ready)
@@ -139,6 +152,10 @@ void app_main(void)
         {
             e_icm = icm42670p_read_sample(&smp);
             icm_ok = (e_icm == ESP_OK);
+            if (icm_ok)
+            {
+                calib_icm_apply(&smp);
+            }
         }
         if (scl_ready)
         {
@@ -171,7 +188,8 @@ void app_main(void)
                 const float *a = smp.acc_g;
                 printf("ACC >> X=%+.4f Y=%+.4f Z=%+.4f g | |a|=%.4f g\n",
                        a[0], a[1], a[2], sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]));
-                printf("GYR >> X=%+.3f Y=%+.3f Z=%+.3f dps\n", smp.gyro_dps[0], smp.gyro_dps[1], smp.gyro_dps[2]);
+                printf("GYR >> X=%+.3f Y=%+.3f Z=%+.3f dps%s\n", smp.gyro_dps[0], smp.gyro_dps[1], smp.gyro_dps[2],
+                       calib_icm()->gyro_valid ? " [cal]" : "");
             }
             if (scl_ready && inc_ok)
             {
